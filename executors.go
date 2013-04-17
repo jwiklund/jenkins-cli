@@ -4,65 +4,100 @@ import (
 	"code.google.com/p/go-html-transform/h5"
 	"code.google.com/p/go.net/html"
 	"code.google.com/p/go.net/html/atom"
+	"errors"
+	"fmt"
 	"io"
-	"strings"
 )
 
-func attrs(attributes []html.Attribute) string {
-	res := ""
-	for _, a := range attributes {
-		res = res + a.Key + "=" + a.Val + ";"
+func parseGetChild(node *html.Node, childType atom.Atom, count int) (*html.Node, error) {
+	if node.FirstChild == nil {
+		return nil, errors.New("No children")
 	}
-	return res
-}
-
-func hrefToName(attributes []html.Attribute, delimiter string) string {
-	for _, a := range attributes {
-		if a.Key == "href" {
-			ind := strings.Index(a.Val, delimiter)
-			if ind > 0 {
-				res := a.Val[ind+len(delimiter):]
-				if res[len(res)-1] == '/' {
-					res = res[0 : len(res)-1]
-				}
-				return res
-			}
+	if node.LastChild == node.FirstChild {
+		if node.FirstChild.DataAtom != childType {
+			return parseGetChild(node.FirstChild, childType, count)
 		}
 	}
-	return ""
+	child := node.FirstChild
+	for {
+		if child.DataAtom == childType {
+			count = count - 1
+			if count == 0 {
+				return child, nil
+			}
+		}
+		if child == node.LastChild {
+			return nil, errors.New("Atom not found " + childType.String() + " in " + h5.NewTree(node).String())
+		}
+		child = child.NextSibling
+	}
+	return nil, errors.New("Atom not found " + childType.String() + " in " + h5.NewTree(node).String())
 }
 
+func parsePrint(n *html.Node) {
+	fmt.Println(h5.NewTree(n).String())
+}
 func parseExecutors(rdr io.Reader) ([]Build, error) {
-	h5, err := h5.New(rdr)
+	tree, err := h5.New(rdr)
 	if err != nil {
 		return nil, err
 	}
-	state := "none"
-	node := ""
-	build := ""
-	var builds []Build
-	save := func() {
-		builds = append(builds, Build{node, build})
+	body, err := parseGetChild(tree.Top(), atom.Body, 1)
+	if err != nil {
+		return nil, err
 	}
-	h5.Walk(func(n *html.Node) {
-		if n.DataAtom == atom.Th {
-			if node != "" {
-				save()
+	table, err := parseGetChild(body, atom.Table, 1)
+	if err != nil {
+		return nil, err
+	}
+	tbody, err := parseGetChild(table, atom.Tbody, 2)
+	if err != nil {
+		return nil, err
+	}
+	tr := tbody.FirstChild
+	var builds []Build
+	for {
+		th, err := parseGetChild(tr, atom.Th, 1)
+		if err == nil {
+			nameLink, err := parseGetChild(th, atom.A, 1)
+			if err != nil {
+				fmt.Println("link not found")
+				return nil, err
 			}
-			state = "node"
-		}
-		if n.DataAtom == atom.Div {
-			state = "build"
-		}
-		if n.DataAtom == atom.A {
-			if state == "node" {
-				node = hrefToName(n.Attr, "/computer/")
-				state = "none"
-			} else if state == "build" {
-				build = hrefToName(n.Attr, "/job/")
+			if tr.NextSibling == nil {
+				return nil, errors.New("Ended without final build info ")
+			}
+			tr = tr.NextSibling
+			_, err = parseGetChild(tr, atom.Th, 1)
+			if err == nil {
+				// no data row
+				builds = append(builds, Build{nameLink.FirstChild.Data, ""})
+				continue
+			}
+			if tr.FirstChild == nil || tr.FirstChild.NextSibling == nil {
+				return nil, errors.New("Build without div")
+			}
+			buildTd := tr.FirstChild.NextSibling
+			if buildTd.DataAtom != atom.Td {
+				return nil, errors.New("Expected td but got " + h5.NewTree(buildTd).String())
+			}
+			buildDiv, err := parseGetChild(buildTd, atom.Div, 1)
+			if err != nil {
+				// empty data row
+				builds = append(builds, Build{nameLink.FirstChild.Data, ""})
+			} else {
+				build, err := parseGetChild(buildDiv, atom.A, 1)
+				if err != nil {
+					return nil, err
+				}
+				builds = append(builds, Build{nameLink.FirstChild.Data, build.FirstChild.Data})
 			}
 		}
-	})
-	save()
+		if tr == tbody.LastChild {
+			break
+		}
+		tr = tr.NextSibling
+	}
+
 	return builds, nil
 }

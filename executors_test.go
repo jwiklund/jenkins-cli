@@ -26,5 +26,5 @@ func TestParseExecutors(t *testing.T) {
 		t.Fatalf("Expected 15 builds but got %d", len(executors))
 	}
 	checkBuild(t, "dumslav", "", executors[0])
-	checkBuild(t, "euca-jdk-1-6-linux-2-6-782", "VOID_Minutely/1045", executors[2])
+	checkBuild(t, "euca-jdk-1-6-linux-2-6-782", "VOID_Minutely", executors[2])
 }
