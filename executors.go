@@ -65,7 +65,8 @@ func parseExecutors(rdr io.Reader) ([]Build, error) {
 				return nil, err
 			}
 			if tr.NextSibling == nil {
-				return nil, errors.New("Ended without final build info ")
+				builds = append(builds, Build{nameLink.FirstChild.Data, ""})
+				break
 			}
 			tr = tr.NextSibling
 			_, err = parseGetChild(tr, atom.Th, 1)

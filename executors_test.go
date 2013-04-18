@@ -6,7 +6,7 @@ import (
 )
 
 func checkBuild(t *testing.T, node, build string, actual Build) {
-	if actual.node != node || actual.build != build {
+	if actual.Node != node || actual.Build != build {
 		t.Fatal("Expected " + Build{node, build}.String() + " but got " + actual.String())
 	}
 }
