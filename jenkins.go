@@ -102,7 +102,8 @@ func (j jenkins) NodeInfo(node string) (NodeInfo, error) {
 	if err != nil {
 		return NodeInfo{}, err
 	}
-	req, err := http.NewRequest("GET", j.url()+"/computer/"+node+"/log", nil)
+	url := j.url() + "/computer/" + node + "/logText/progressiveHtml"
+	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return NodeInfo{}, err
 	}

@@ -1,17 +1,27 @@
 package jenkins
 
 import (
+	"bufio"
 	"errors"
 	"io"
-	"os"
+	"strings"
 )
 
 func parseComputer(rdr io.Reader) (NodeInfo, error) {
-	f, err := os.Create("computer_test.html")
-	if err != nil {
-		return NodeInfo{}, err
+	r := bufio.NewReader(rdr)
+	for {
+		l, err := r.ReadString('\n')
+		if err != nil {
+			return NodeInfo{}, err
+		}
+		if strings.Contains(l, "Connecting to ") {
+			ip := l[len("Connecting to "):]
+			ind := strings.Index(ip, " ")
+			if ind > 0 {
+				ip = ip[0:ind]
+			}
+			return NodeInfo{Node: "", Ip: ip}, nil
+		}
 	}
-	io.Copy(f, rdr)
-	f.Close()
 	return NodeInfo{}, errors.New("Not Implemented")
 }
