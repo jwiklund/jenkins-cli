@@ -118,7 +118,7 @@ func ExportBuilds(filter string) {
 		fmt.Println("Could not load jobs ", err)
 		return
 	}
-	fmt.Println("Job,Number,Host,Duration,Start")
+	fmt.Println("Job,Number,Host,Duration,Start,Result")
 	for _, job := range jobs {
 		if filter != "" {
 			matched, err := regexp.MatchString(filter, job.Name)
@@ -135,7 +135,7 @@ func ExportBuilds(filter string) {
 			return
 		}
 		for _, build := range builds {
-			fmt.Printf("%s,%d,%s,%d,%d\n", build.Job, build.Number, build.Host, build.Duration, build.Start)
+			fmt.Printf("%s,%d,%s,%d,%d,%s\n", build.Job, build.Number, build.Host, build.Duration, build.Start, build.Result)
 		}
 	}
 }
@@ -146,7 +146,7 @@ func main() {
 	refresh := flag.Bool("refresh", false, "Update job builds")
 	builds := flag.Bool("builds", false, "Get builds for job")
 	export := flag.Bool("export", false, "Export to CSV (possibly filtered)")
-	filter := flag.String("filter", "", "Jobs list filter")
+	filter := flag.String("filter", "", "Jobs list filter (a regular expression)")
 	flag.Parse()
 	if *list {
 		ListJobs(*filter)

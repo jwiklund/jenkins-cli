@@ -12,7 +12,7 @@ func OpenStore(path string) (Store, error) {
 	if err != nil {
 		return Store{}, err
 	}
-	err = db.Exec("create table if not exists builds(job, number, start, duration, host, primary key(job, number))")
+	err = db.Exec("create table if not exists builds(job, number, start, duration, host, result, primary key(job, number))")
 	if err != nil {
 		return Store{}, err
 	}
@@ -81,7 +81,7 @@ func (s Store) PutJob(job Job) error {
 }
 
 func (s Store) GetBuilds(name string) ([]Build, error) {
-	stmt, err := s.conn.Prepare("select job, number, start, duration, host from builds where job = ?")
+	stmt, err := s.conn.Prepare("select job, number, start, duration, host, result from builds where job = ?")
 	if err != nil {
 		return nil, err
 	}
@@ -102,7 +102,8 @@ func (s Store) GetBuilds(name string) ([]Build, error) {
 			return err
 		}
 		host, _ := s.ScanText(4)
-		builds = append(builds, Build{job, number, start, duration, host})
+		result, _ := s.ScanText(5)
+		builds = append(builds, Build{job, number, start, duration, host, result})
 		return nil
 	}, name)
 	if err != nil {
@@ -112,11 +113,11 @@ func (s Store) GetBuilds(name string) ([]Build, error) {
 }
 
 func (s Store) PutBuild(build Build) error {
-	stmt, err := s.conn.Prepare("insert into builds values (?, ?, ?, ?, ?)")
+	stmt, err := s.conn.Prepare("insert into builds values (?, ?, ?, ?, ?, ?)")
 	if err != nil {
 		return err
 	}
 	defer stmt.Finalize()
-	_, err = stmt.Insert(build.Job, build.Number, build.Start, build.Duration, build.Host)
+	_, err = stmt.Insert(build.Job, build.Number, build.Start, build.Duration, build.Host, build.Result)
 	return err
 }

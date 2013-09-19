@@ -69,6 +69,7 @@ type Build struct {
 	Start    int64
 	Duration int64
 	Host     string
+	Result   string
 }
 
 type JsonBuild struct {
@@ -77,6 +78,7 @@ type JsonBuild struct {
 	Duration        int64
 	Timestamp       int64
 	Number          int
+	Result          string
 }
 
 type JsonJob struct {
@@ -90,12 +92,12 @@ func itoa(i int64) string {
 }
 
 func (b Build) String() string {
-	return b.Job + " " + strconv.Itoa(b.Number) + " started " + itoa(b.Start) + ", duration " + itoa(b.Duration) + " at " + b.Host
+	return b.Job + " " + strconv.Itoa(b.Number) + " started " + itoa(b.Start) + ", duration " + itoa(b.Duration) + " at " + b.Host + " status " + b.Result
 }
 
 func (j Job) GetBuilds() ([]Build, error) {
 	var details JsonJob
-	err := getJson(j.Url+"/api/json?tree=builds[number,url,duration,timestamp,fullDisplayName]", &details)
+	err := getJson(j.Url+"/api/json?tree=builds[number,url,duration,timestamp,fullDisplayName,result]", &details)
 	if err != nil {
 		return nil, errors.New("Could not fetch json: " + err.Error())
 	}
@@ -105,7 +107,7 @@ func (j Job) GetBuilds() ([]Build, error) {
 		if err != nil {
 			host = "failure: " + err.Error()
 		}
-		res = append(res, Build{j.Name, build.Number, build.Timestamp, build.Duration, host})
+		res = append(res, Build{j.Name, build.Number, build.Timestamp, build.Duration, host, build.Result})
 	}
 	return res, nil
 }
