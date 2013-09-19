@@ -3,22 +3,23 @@ package main
 import (
 	"flag"
 	"fmt"
+	"regexp"
 )
 
 var storeLocation = "data"
 
-func SaveJobs(filter string, args []string) {
-	if len(args) == 0 {
-		jobs, err := GetJobs(filter)
-		if err != nil {
-			fmt.Println("Could not list jobs ", err)
-			return
-		}
-		for _, job := range jobs {
-			fmt.Println(job.Name)
-		}
+func ListJobs(filter string) {
+	jobs, err := GetJobs(filter)
+	if err != nil {
+		fmt.Println("Could not list jobs ", err)
 		return
 	}
+	for _, job := range jobs {
+		fmt.Println(job.Name)
+	}
+}
+
+func SaveJobs(args []string) {
 	jobs, err := GetJobs("")
 	if err != nil {
 		fmt.Println("Could not list jobs ", err)
@@ -105,18 +106,58 @@ func RefreshBuilds() {
 	}
 }
 
+func ExportBuilds(filter string) {
+	store, err := OpenStore(storeLocation)
+	if err != nil {
+		fmt.Println("Could not open store ", err)
+		return
+	}
+	defer store.Close()
+	jobs, err := store.GetJobs()
+	if err != nil {
+		fmt.Println("Could not load jobs ", err)
+		return
+	}
+	fmt.Println("Job,Number,Host,Duration,Start")
+	for _, job := range jobs {
+		if filter != "" {
+			matched, err := regexp.MatchString(filter, job.Name)
+			if err != nil {
+				panic(err)
+			}
+			if !matched {
+				continue
+			}
+		}
+		builds, err := store.GetBuilds(job.Name)
+		if err != nil {
+			fmt.Println("Could not load builds ", err)
+			return
+		}
+		for _, build := range builds {
+			fmt.Printf("%s,%d,%s,%d,%d\n", build.Job, build.Number, build.Host, build.Duration, build.Start)
+		}
+	}
+}
+
 func main() {
+	list := flag.Bool("list", false, "List existing job (possibly filtered)")
 	save := flag.Bool("store", false, "Store new jobs")
 	refresh := flag.Bool("refresh", false, "Update job builds")
 	builds := flag.Bool("builds", false, "Get builds for job")
+	export := flag.Bool("export", false, "Export to CSV (possibly filtered)")
 	filter := flag.String("filter", "", "Jobs list filter")
 	flag.Parse()
-	if *save {
-		SaveJobs(*filter, flag.Args())
+	if *list {
+		ListJobs(*filter)
+	} else if *save {
+		SaveJobs(flag.Args())
 	} else if *refresh {
 		RefreshBuilds()
 	} else if *builds {
 		GetBuilds(flag.Args())
+	} else if *export {
+		ExportBuilds(*filter)
 	} else {
 		fmt.Println("Don't know what to do (run -help)")
 	}

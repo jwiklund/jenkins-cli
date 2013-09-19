@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io/ioutil"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -40,7 +41,7 @@ func getJson(url string, target interface{}) error {
 	return nil
 }
 
-func GetJobs(prefix string) ([]Job, error) {
+func GetJobs(filter string) ([]Job, error) {
 	var jenkins Jenkins
 	err := getJson("http://jenkins/jenkins/api/json", &jenkins)
 	if err != nil {
@@ -48,9 +49,16 @@ func GetJobs(prefix string) ([]Job, error) {
 	}
 	var jobs []Job
 	for _, job := range jenkins.Jobs {
-		if strings.Index(job.Name, prefix) == 0 {
-			jobs = append(jobs, job)
+		if filter != "" {
+			matched, err := regexp.MatchString(filter, job.Name)
+			if err != nil {
+				panic(err)
+			}
+			if !matched {
+				continue
+			}
 		}
+		jobs = append(jobs, job)
 	}
 	return jobs, nil
 }
