@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	sqlite "github.com/gwenn/gosqlite"
+	"strconv"
 )
 
 type Store struct{ conn *sqlite.Conn }
@@ -12,15 +13,106 @@ func OpenStore(path string) (Store, error) {
 	if err != nil {
 		return Store{}, err
 	}
-	err = db.Exec("create table if not exists builds(job, number, start, duration, host, result, primary key(job, number))")
-	if err != nil {
+	store := Store{db}
+	if err = store.ensureVersionTable(); err != nil {
+		store.Close()
 		return Store{}, err
 	}
-	err = db.Exec("create table if not exists jobs(name primary key, url)")
-	if err != nil {
+	if err = store.ensureBuildTable(); err != nil {
+		store.Close()
+		return Store{}, err
+	}
+	if err = store.ensureJobTable(); err != nil {
+		store.Close()
 		return Store{}, err
 	}
 	return Store{db}, nil
+}
+
+func (s Store) ensureVersionTable() error {
+	err := s.conn.Exec("create table if not exists version(version)")
+	if err != nil {
+		return err
+	}
+	vstmt, err := s.conn.Prepare("select version from version")
+	if err != nil {
+		return err
+	}
+	defer vstmt.Finalize()
+	version := 0
+	err = vstmt.Select(func(s *sqlite.Stmt) error {
+		version, _, err = s.ScanInt(0)
+		return err
+	})
+	if version == 0 {
+		tstmt, err := s.conn.Prepare("select name from sqlite_master where type = 'table' and name = 'builds'")
+		if err != nil {
+			return err
+		}
+		defer tstmt.Finalize()
+		buildsExists := false
+		tstmt.Select(func(s *sqlite.Stmt) error {
+			buildsExists = true
+			return nil
+		})
+		if buildsExists {
+			version = 1
+		}
+		istmt, err := s.conn.Prepare("insert into version values (?)")
+		if err != nil {
+			return err
+		}
+		defer istmt.Finalize()
+		_, err = istmt.Insert(version)
+		return err
+	}
+	return nil
+}
+
+func (s Store) version() (int, error) {
+	stmt, err := s.conn.Prepare("select version from version")
+	if err != nil {
+		return -1, err
+	}
+	defer stmt.Finalize()
+	version := -1
+	err = stmt.Select(func(s *sqlite.Stmt) error {
+		version, _, err = s.ScanInt(0)
+		return err
+	})
+	if err != nil {
+		return -1, err
+	}
+	if version == -1 {
+		return -1, errors.New("version table not initialized")
+	}
+	return version, nil
+}
+
+func (s Store) ensureBuildTable() error {
+	version, err := s.version()
+	if err != nil {
+		return err
+	}
+	switch version {
+	case 0:
+		if err := s.conn.Exec("create table if not exists builds(job, number, start, duration, host, result, errors, primary key(job, number))"); err != nil {
+			return err
+		}
+		return s.conn.Exec("update version set version = '2'")
+	case 1:
+		if err := s.conn.Exec("alter table builds add column errors"); err != nil {
+			return err
+		}
+		return s.conn.Exec("update version set version = '2'")
+	case 2:
+		return nil
+	}
+	return errors.New("Unsupported version " + strconv.Itoa(version))
+}
+
+func (s Store) ensureJobTable() error {
+	return s.conn.Exec("create table if not exists jobs(name primary key, url)")
 }
 
 func (s Store) Close() {
