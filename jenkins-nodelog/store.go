@@ -96,12 +96,15 @@ func (s Store) ensureBuildTable() error {
 	}
 	switch version {
 	case 0:
-		if err := s.conn.Exec("create table if not exists builds(job, number, start, duration, host, result, errors, primary key(job, number))"); err != nil {
+		if err := s.conn.Exec("create table if not exists builds(job, number, start, duration, host, result, failed, total, primary key(job, number))"); err != nil {
 			return err
 		}
 		return s.conn.Exec("update version set version = '2'")
 	case 1:
-		if err := s.conn.Exec("alter table builds add column errors"); err != nil {
+		if err := s.conn.Exec("alter table builds add column failed"); err != nil {
+			return err
+		}
+		if err := s.conn.Exec("alter table builds add column total"); err != nil {
 			return err
 		}
 		return s.conn.Exec("update version set version = '2'")
@@ -173,7 +176,7 @@ func (s Store) PutJob(job Job) error {
 }
 
 func (s Store) GetBuilds(name string) ([]Build, error) {
-	stmt, err := s.conn.Prepare("select job, number, start, duration, host, result from builds where job = ?")
+	stmt, err := s.conn.Prepare("select job, number, start, duration, host, result, failed, total from builds where job = ?")
 	if err != nil {
 		return nil, err
 	}
@@ -195,7 +198,21 @@ func (s Store) GetBuilds(name string) ([]Build, error) {
 		}
 		host, _ := s.ScanText(4)
 		result, _ := s.ScanText(5)
-		builds = append(builds, Build{job, number, start, duration, host, result})
+		failed, isNull, err := s.ScanInt(6)
+		if err != nil {
+			return err
+		}
+		if isNull {
+			failed = -1
+		}
+		total, isNull, err := s.ScanInt(7)
+		if err != nil {
+			return err
+		}
+		if isNull {
+			total = -1
+		}
+		builds = append(builds, Build{job, number, start, duration, host, result, failed, total})
 		return nil
 	}, name)
 	if err != nil {
@@ -205,11 +222,11 @@ func (s Store) GetBuilds(name string) ([]Build, error) {
 }
 
 func (s Store) PutBuild(build Build) error {
-	stmt, err := s.conn.Prepare("insert into builds values (?, ?, ?, ?, ?, ?)")
+	stmt, err := s.conn.Prepare("insert into builds values (?, ?, ?, ?, ?, ?, ?, ?)")
 	if err != nil {
 		return err
 	}
 	defer stmt.Finalize()
-	_, err = stmt.Insert(build.Job, build.Number, build.Start, build.Duration, build.Host, build.Result)
+	_, err = stmt.Insert(build.Job, build.Number, build.Start, build.Duration, build.Host, build.Result, build.Failed, build.Total)
 	return err
 }

@@ -70,6 +70,13 @@ type Build struct {
 	Duration int64
 	Host     string
 	Result   string
+	Failed   int
+	Total    int
+}
+
+type JsonAction struct {
+	FailCount  int
+	TotalCount int
 }
 
 type JsonBuild struct {
@@ -79,6 +86,7 @@ type JsonBuild struct {
 	Timestamp       int64
 	Number          int
 	Result          string
+	Actions         []JsonAction
 }
 
 type JsonJob struct {
@@ -92,12 +100,13 @@ func itoa(i int64) string {
 }
 
 func (b Build) String() string {
-	return b.Job + " " + strconv.Itoa(b.Number) + " started " + itoa(b.Start) + ", duration " + itoa(b.Duration) + " at " + b.Host + " status " + b.Result
+	return b.Job + " " + strconv.Itoa(b.Number) + " started " + itoa(b.Start) + ", duration " + itoa(b.Duration) + " at " + b.Host +
+		" status " + b.Result + " failed " + strconv.Itoa(b.Failed) + " of " + strconv.Itoa(b.Total)
 }
 
 func (j Job) GetBuilds() ([]Build, error) {
 	var details JsonJob
-	err := getJson(j.Url+"/api/json?tree=builds[number,url,duration,timestamp,fullDisplayName,result]", &details)
+	err := getJson(j.Url+"/api/json?tree=builds[number,url,duration,timestamp,fullDisplayName,result,actions[failCount,totalCount]]", &details)
 	if err != nil {
 		return nil, errors.New("Could not fetch json: " + err.Error())
 	}
@@ -107,7 +116,15 @@ func (j Job) GetBuilds() ([]Build, error) {
 		if err != nil {
 			host = "failure: " + err.Error()
 		}
-		res = append(res, Build{j.Name, build.Number, build.Timestamp, build.Duration, host, build.Result})
+		fail := -1
+		total := -1
+		for _, a := range build.Actions {
+			if a.TotalCount > 0 {
+				total = a.TotalCount
+				fail = a.FailCount
+			}
+		}
+		res = append(res, Build{j.Name, build.Number, build.Timestamp, build.Duration, host, build.Result, fail, total})
 	}
 	return res, nil
 }
