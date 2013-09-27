@@ -74,6 +74,65 @@ func GetBuilds(jobNames []string) {
 	}
 }
 
+type PutReq struct {
+	Build  Build
+	Update bool
+}
+
+type GetReq struct {
+	Name   string
+	Builds chan []Build
+}
+
+func StoreHandler(store *Store, puts chan *PutReq, gets chan *GetReq, fini chan bool) {
+	if err := store.Begin(); err != nil {
+		fmt.Println("Begin failure", err)
+	}
+	doget := func(get *GetReq) {
+		builds, err := store.GetBuilds(get.Name)
+		if err != nil {
+			fmt.Println("Failed getting "+get.Name, err)
+		}
+		get.Builds <- builds
+	}
+	doput := func(put *PutReq) {
+		if put.Update {
+			err := store.UpdateBuild(put.Build)
+			fmt.Println("Updated build "+put.Build.String(), err)
+		} else {
+			err := store.InsertBuild(put.Build)
+			fmt.Println("Added build "+put.Build.String(), err)
+		}
+	}
+	run := true
+	for run {
+		select {
+		case get, ok := <-gets:
+			if ok {
+				doget(get)
+			} else {
+				run = false
+			}
+		case put, ok := <-puts:
+			if ok {
+				doput(put)
+			} else {
+				run = false
+			}
+		}
+	}
+	for get := range gets {
+		doget(get)
+	}
+	for put := range puts {
+		doput(put)
+	}
+	if err := store.Commit(); err != nil {
+		fmt.Println("Commit failure", err)
+	}
+	close(fini)
+}
+
 func RefreshBuilds(update bool) {
 	store, err := OpenStore(storeLocation)
 	if err != nil {
@@ -81,11 +140,12 @@ func RefreshBuilds(update bool) {
 		return
 	}
 	defer store.Close()
-	if err := store.Begin(); err != nil {
-		fmt.Println("Begin failure", err)
-	}
 	jobs, err := store.GetJobs()
 	var wg sync.WaitGroup
+	puts := make(chan *PutReq, 100)
+	gets := make(chan *GetReq, 100)
+	fini := make(chan bool)
+	go StoreHandler(&store, puts, gets, fini)
 	for _, job := range jobs {
 		wg.Add(1)
 		f := func(job Job) {
@@ -95,33 +155,29 @@ func RefreshBuilds(update bool) {
 				fmt.Println("Could not refresh "+job.Name+", ", err)
 				return
 			}
-			current, err := store.GetBuilds(job.Name)
-			if err != nil {
-				fmt.Println("Could not get builds from store ", err)
-				return
-			}
+			getreq := GetReq{job.Name, make(chan []Build)}
+			gets <- &getreq
 			existing := make(map[int]bool)
-			for _, build := range current {
+			for _, build := range <-getreq.Builds {
 				existing[build.Number] = true
 			}
-
 			for _, build := range builds {
 				_, ok := existing[build.Number]
 				if !ok {
-					err = store.InsertBuild(build)
-					fmt.Println("Added build "+build.String(), err)
+					puts <- &PutReq{build, false}
 				} else if update {
-					err = store.UpdateBuild(build)
-					fmt.Println("Updated build "+build.String(), err)
+					puts <- &PutReq{build, true}
 				}
 			}
 		}
 		go f(job)
 	}
 	wg.Wait()
-	if err := store.Commit(); err != nil {
-		fmt.Println("Commit failure", err)
-	}
+	// clean up
+	close(puts)
+	close(gets)
+	// wait until drained
+	<-fini
 }
 
 func ExportBuilds(filter string) {
