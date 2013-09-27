@@ -192,7 +192,7 @@ func ExportBuilds(filter string) {
 		fmt.Println("Could not load jobs ", err)
 		return
 	}
-	fmt.Println("Job,Number,Host,Duration,Start,Result")
+	fmt.Println("Job,Number,Host,Duration,Start,Result,Failed,Total")
 	for _, job := range jobs {
 		if filter != "" {
 			matched, err := regexp.MatchString(filter, job.Name)
@@ -209,7 +209,8 @@ func ExportBuilds(filter string) {
 			return
 		}
 		for _, build := range builds {
-			fmt.Printf("%s,%d,%s,%d,%d,%s\n", build.Job, build.Number, build.Host, build.Duration, build.Start, build.Result)
+			fmt.Printf("%s,%d,%s,%d,%d,%s,%d,%d\n", build.Job, build.Number, build.Host,
+				build.Duration, build.Start, build.Result, build.Failed, build.Total)
 		}
 	}
 }
