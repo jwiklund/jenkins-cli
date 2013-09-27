@@ -1,15 +1,16 @@
 package main
 
 import (
+	"database/sql"
 	"errors"
-	sqlite "github.com/gwenn/gosqlite"
+	_ "github.com/mattn/go-sqlite3"
 	"strconv"
 )
 
-type Store struct{ conn *sqlite.Conn }
+type Store struct{ db *sql.DB }
 
 func OpenStore(path string) (Store, error) {
-	db, err := sqlite.Open(path)
+	db, err := sql.Open("sqlite3", "data")
 	if err != nil {
 		return Store{}, err
 	}
@@ -30,63 +31,52 @@ func OpenStore(path string) (Store, error) {
 }
 
 func (s Store) ensureVersionTable() error {
-	err := s.conn.Exec("create table if not exists version(version)")
+	_, err := s.db.Exec("create table if not exists version(version)")
 	if err != nil {
 		return err
 	}
-	vstmt, err := s.conn.Prepare("select version from version")
+	vrows, err := s.db.Query("select version from version")
 	if err != nil {
 		return err
 	}
-	defer vstmt.Finalize()
+	defer vrows.Close()
 	version := 0
-	err = vstmt.Select(func(s *sqlite.Stmt) error {
-		version, _, err = s.ScanInt(0)
-		return err
-	})
-	if version == 0 {
-		tstmt, err := s.conn.Prepare("select name from sqlite_master where type = 'table' and name = 'builds'")
+	if vrows.Next() {
+		err = vrows.Scan(&version)
 		if err != nil {
 			return err
 		}
-		defer tstmt.Finalize()
-		buildsExists := false
-		tstmt.Select(func(s *sqlite.Stmt) error {
-			buildsExists = true
-			return nil
-		})
-		if buildsExists {
+	}
+	if version == 0 {
+		trows, err := s.db.Query("select name from sqlite_master where type = 'table' and name = 'builds'")
+		if err != nil {
+			return err
+		}
+		if trows.Next() {
 			version = 1
 		}
-		istmt, err := s.conn.Prepare("insert into version values (?)")
-		if err != nil {
-			return err
-		}
-		defer istmt.Finalize()
-		_, err = istmt.Insert(version)
+		trows.Close()
+		_, err = s.db.Exec("insert into versions values (?)", version)
 		return err
 	}
 	return nil
 }
 
 func (s Store) version() (int, error) {
-	stmt, err := s.conn.Prepare("select version from version")
+	rows, err := s.db.Query("select version from version")
 	if err != nil {
 		return -1, err
 	}
-	defer stmt.Finalize()
-	version := -1
-	err = stmt.Select(func(s *sqlite.Stmt) error {
-		version, _, err = s.ScanInt(0)
-		return err
-	})
-	if err != nil {
-		return -1, err
+	defer rows.Close()
+	if rows.Next() {
+		version := 0
+		err = rows.Scan(&version)
+		if err != nil {
+			return -1, err
+		}
+		return version, nil
 	}
-	if version == -1 {
-		return -1, errors.New("version table not initialized")
-	}
-	return version, nil
+	return -1, errors.New("version table not initialized")
 }
 
 func (s Store) ensureBuildTable() error {
@@ -96,18 +86,20 @@ func (s Store) ensureBuildTable() error {
 	}
 	switch version {
 	case 0:
-		if err := s.conn.Exec("create table if not exists builds(job, number, start, duration, host, result, failed, total, primary key(job, number))"); err != nil {
+		if _, err := s.db.Exec("create table if not exists builds(job, number, start, duration, host, result, failed, total, primary key(job, number))"); err != nil {
 			return err
 		}
-		return s.conn.Exec("update version set version = '2'")
+		_, err = s.db.Exec("update version set version = '2'")
+		return err
 	case 1:
-		if err := s.conn.Exec("alter table builds add column failed"); err != nil {
+		if _, err := s.db.Exec("alter table builds add column failed"); err != nil {
 			return err
 		}
-		if err := s.conn.Exec("alter table builds add column total"); err != nil {
+		if _, err := s.db.Exec("alter table builds add column total"); err != nil {
 			return err
 		}
-		return s.conn.Exec("update version set version = '2'")
+		_, err = s.db.Exec("update version set version = '2'")
+		return err
 	case 2:
 		return nil
 	}
@@ -115,118 +107,113 @@ func (s Store) ensureBuildTable() error {
 }
 
 func (s Store) ensureJobTable() error {
-	return s.conn.Exec("create table if not exists jobs(name primary key, url)")
+	_, err := s.db.Exec("create table if not exists jobs(name primary key, url)")
+	return err
 }
 
 func (s Store) Close() {
-	s.conn.Close()
+	s.db.Close()
 }
 
 func (s Store) GetJobs() ([]Job, error) {
-	stmt, err := s.conn.Prepare("select name, url from jobs")
+	rows, err := s.db.Query("select name, url from jobs")
 	if err != nil {
 		return nil, err
 	}
-	defer stmt.Finalize()
+	defer rows.Close()
 	var jobs []Job
-	err = stmt.Select(func(s *sqlite.Stmt) error {
-		name, _ := s.ScanText(0)
-		url, _ := s.ScanText(1)
+	for rows.Next() {
+		var name, url string
+		if err := rows.Scan(&name, &url); err != nil {
+			return nil, err
+		}
 		jobs = append(jobs, Job{name, url})
-		return nil
-	})
-	if err != nil {
-		return nil, err
 	}
 	return jobs, nil
 }
 
 func (s Store) GetJob(name string) (Job, error) {
-	stmt, err := s.conn.Prepare("select name, url from jobs where name = ?")
+	rows, err := s.db.Query("select name, url from jobs where name = ?", name)
 	if err != nil {
 		return Job{}, err
 	}
-	defer stmt.Finalize()
-	var job Job
-	found := false
-	err = stmt.Select(func(s *sqlite.Stmt) error {
-		name, _ := s.ScanText(0)
-		url, _ := s.ScanText(1)
-		job = Job{name, url}
-		found = true
-		return nil
-	}, name)
-	if err != nil {
-		return Job{}, err
+	defer rows.Close()
+	if rows.Next() {
+		var name, url string
+		if err := rows.Scan(&name, &url); err != nil {
+			return Job{}, err
+		}
+		return Job{name, url}, nil
 	}
-	if !found {
-		return Job{}, errors.New("Job not found " + name)
-	}
-	return job, nil
+	return Job{}, errors.New("Job not found " + name)
 }
 
 func (s Store) PutJob(job Job) error {
-	stmt, err := s.conn.Prepare("insert into jobs values (?, ?)")
-	if err != nil {
-		return err
-	}
-	defer stmt.Finalize()
-	_, err = stmt.Insert(job.Name, job.Url)
+	_, err := s.db.Exec("insert into jobs values (?, ?)", job.Name, job.Url)
 	return err
 }
 
+func conv64(in sql.NullString) (int64, error) {
+	if !in.Valid {
+		return -1, nil
+	}
+	i, err := strconv.ParseInt(in.String, 10, 64)
+	if err != nil {
+		return 0, err
+	}
+	return i, nil
+}
+
+func conv(in sql.NullString) (int, error) {
+	if !in.Valid {
+		return -1, nil
+	}
+	i, err := strconv.Atoi(in.String)
+	if err != nil {
+		return 0, err
+	}
+	return i, nil
+}
+
 func (s Store) GetBuilds(name string) ([]Build, error) {
-	stmt, err := s.conn.Prepare("select job, number, start, duration, host, result, failed, total from builds where job = ?")
+	rows, err := s.db.Query("select job, number, start, duration, host, result, failed, total from builds where job = ?", name)
 	if err != nil {
 		return nil, err
 	}
-	defer stmt.Finalize()
+	defer rows.Close()
 	var builds []Build
-	err = stmt.Select(func(s *sqlite.Stmt) error {
-		job, _ := s.ScanText(0)
-		number, _, err := s.ScanInt(1)
+	for rows.Next() {
+		var job, snumber, sstart, sduration, host, result, sfailed, stotal sql.NullString
+		if err := rows.Scan(&job, &snumber, &sstart, &sduration, &host, &result, &sfailed, &stotal); err != nil {
+			return nil, err
+		}
+		number, err := conv(snumber)
 		if err != nil {
-			return err
+			return nil, err
 		}
-		start, _, err := s.ScanInt64(2)
+		start, err := conv64(sstart)
 		if err != nil {
-			return err
+			return nil, err
 		}
-		duration, _, err := s.ScanInt64(3)
+		duration, err := conv64(sduration)
 		if err != nil {
-			return err
+			return nil, err
 		}
-		host, _ := s.ScanText(4)
-		result, _ := s.ScanText(5)
-		failed, isNull, err := s.ScanInt(6)
+		failed, err := conv(sfailed)
 		if err != nil {
-			return err
+			return nil, err
 		}
-		if isNull {
-			failed = -1
-		}
-		total, isNull, err := s.ScanInt(7)
+		total, err := conv(stotal)
 		if err != nil {
-			return err
+			return nil, err
 		}
-		if isNull {
-			total = -1
-		}
-		builds = append(builds, Build{job, number, start, duration, host, result, failed, total})
-		return nil
-	}, name)
-	if err != nil {
-		return nil, err
+		builds = append(builds, Build{job.String, number, start, duration, host.String, result.String, failed, total})
 	}
 	return builds, nil
 }
 
 func (s Store) PutBuild(build Build) error {
-	stmt, err := s.conn.Prepare("insert into builds values (?, ?, ?, ?, ?, ?, ?, ?)")
-	if err != nil {
-		return err
-	}
-	defer stmt.Finalize()
-	_, err = stmt.Insert(build.Job, build.Number, build.Start, build.Duration, build.Host, build.Result, build.Failed, build.Total)
+	_, err := s.db.Exec("insert into builds values (?, ?, ?, ?, ?, ?, ?, ?)",
+		build.Job, build.Number, build.Start, build.Duration, build.Host, build.Result, build.Failed, build.Total)
 	return err
 }
