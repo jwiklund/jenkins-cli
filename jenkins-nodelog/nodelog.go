@@ -73,7 +73,7 @@ func GetBuilds(jobNames []string) {
 	}
 }
 
-func RefreshBuilds() {
+func RefreshBuilds(update bool) {
 	store, err := OpenStore(storeLocation)
 	if err != nil {
 		fmt.Println("Could not open store ", err)
@@ -99,8 +99,11 @@ func RefreshBuilds() {
 		for _, build := range builds {
 			_, ok := existing[build.Number]
 			if !ok {
-				err = store.PutBuild(build)
+				err = store.InsertBuild(build)
 				fmt.Println("Added build "+build.String(), err)
+			} else if update {
+				err = store.UpdateBuild(build)
+				fmt.Println("Updated build "+build.String(), err)
 			}
 		}
 	}
@@ -144,6 +147,7 @@ func main() {
 	list := flag.Bool("list", false, "List existing job (possibly filtered)")
 	save := flag.Bool("store", false, "Store new jobs")
 	refresh := flag.Bool("refresh", false, "Update job builds")
+	update := flag.Bool("update", false, "Update existing jobs")
 	builds := flag.Bool("builds", false, "Get builds for job")
 	export := flag.Bool("export", false, "Export to CSV (possibly filtered)")
 	filter := flag.String("filter", "", "Jobs list filter (a regular expression)")
@@ -153,7 +157,7 @@ func main() {
 	} else if *save {
 		SaveJobs(flag.Args())
 	} else if *refresh {
-		RefreshBuilds()
+		RefreshBuilds(*update)
 	} else if *builds {
 		GetBuilds(flag.Args())
 	} else if *export {

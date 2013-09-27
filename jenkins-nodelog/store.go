@@ -212,8 +212,14 @@ func (s Store) GetBuilds(name string) ([]Build, error) {
 	return builds, nil
 }
 
-func (s Store) PutBuild(build Build) error {
+func (s Store) InsertBuild(build Build) error {
 	_, err := s.db.Exec("insert into builds values (?, ?, ?, ?, ?, ?, ?, ?)",
 		build.Job, build.Number, build.Start, build.Duration, build.Host, build.Result, build.Failed, build.Total)
+	return err
+}
+
+func (s Store) UpdateBuild(build Build) error {
+	_, err := s.db.Exec("update builds set start = ?, duration = ?, host = ?, result = ?, failed = ?, total = ? where job = ? and number = ?",
+		build.Start, build.Duration, build.Host, build.Result, build.Failed, build.Total, build.Job, build.Number)
 	return err
 }
