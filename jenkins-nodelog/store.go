@@ -7,14 +7,17 @@ import (
 	"strconv"
 )
 
-type Store struct{ db *sql.DB }
+type Store struct {
+	db *sql.DB
+	tx *sql.Tx
+}
 
 func OpenStore(path string) (Store, error) {
 	db, err := sql.Open("sqlite3", "data")
 	if err != nil {
 		return Store{}, err
 	}
-	store := Store{db}
+	store := Store{db, nil}
 	if err = store.ensureVersionTable(); err != nil {
 		store.Close()
 		return Store{}, err
@@ -27,15 +30,15 @@ func OpenStore(path string) (Store, error) {
 		store.Close()
 		return Store{}, err
 	}
-	return Store{db}, nil
+	return store, nil
 }
 
 func (s Store) ensureVersionTable() error {
-	_, err := s.db.Exec("create table if not exists version(version)")
+	_, err := s.exec("create table if not exists version(version)")
 	if err != nil {
 		return err
 	}
-	vrows, err := s.db.Query("select version from version")
+	vrows, err := s.query("select version from version")
 	if err != nil {
 		return err
 	}
@@ -48,7 +51,7 @@ func (s Store) ensureVersionTable() error {
 		}
 	}
 	if version == 0 {
-		trows, err := s.db.Query("select name from sqlite_master where type = 'table' and name = 'builds'")
+		trows, err := s.query("select name from sqlite_master where type = 'table' and name = 'builds'")
 		if err != nil {
 			return err
 		}
@@ -56,14 +59,14 @@ func (s Store) ensureVersionTable() error {
 			version = 1
 		}
 		trows.Close()
-		_, err = s.db.Exec("insert into versions values (?)", version)
+		_, err = s.exec("insert into versions values (?)", version)
 		return err
 	}
 	return nil
 }
 
 func (s Store) version() (int, error) {
-	rows, err := s.db.Query("select version from version")
+	rows, err := s.query("select version from version")
 	if err != nil {
 		return -1, err
 	}
@@ -86,19 +89,19 @@ func (s Store) ensureBuildTable() error {
 	}
 	switch version {
 	case 0:
-		if _, err := s.db.Exec("create table if not exists builds(job, number, start, duration, host, result, failed, total, primary key(job, number))"); err != nil {
+		if _, err := s.exec("create table if not exists builds(job, number, start, duration, host, result, failed, total, primary key(job, number))"); err != nil {
 			return err
 		}
-		_, err = s.db.Exec("update version set version = '2'")
+		_, err = s.exec("update version set version = '2'")
 		return err
 	case 1:
-		if _, err := s.db.Exec("alter table builds add column failed"); err != nil {
+		if _, err := s.exec("alter table builds add column failed"); err != nil {
 			return err
 		}
-		if _, err := s.db.Exec("alter table builds add column total"); err != nil {
+		if _, err := s.exec("alter table builds add column total"); err != nil {
 			return err
 		}
-		_, err = s.db.Exec("update version set version = '2'")
+		_, err = s.exec("update version set version = '2'")
 		return err
 	case 2:
 		return nil
@@ -107,16 +110,54 @@ func (s Store) ensureBuildTable() error {
 }
 
 func (s Store) ensureJobTable() error {
-	_, err := s.db.Exec("create table if not exists jobs(name primary key, url)")
+	_, err := s.exec("create table if not exists jobs(name primary key, url)")
 	return err
 }
 
-func (s Store) Close() {
+func (s *Store) Close() {
+	if s.tx != nil {
+		s.tx.Rollback()
+		s.tx = nil
+	}
 	s.db.Close()
 }
 
+func (s *Store) Begin() error {
+	if s.tx != nil {
+		return errors.New("transaction already in progress")
+	}
+	tx, err := s.db.Begin()
+	if err == nil {
+		s.tx = tx
+	}
+	return err
+}
+
+func (s *Store) Commit() error {
+	if s.tx == nil {
+		return errors.New("No transaction inprogress")
+	}
+	err := s.tx.Commit()
+	s.tx = nil
+	return err
+}
+
+func (s Store) query(query string, args ...interface{}) (*sql.Rows, error) {
+	if s.tx == nil {
+		return s.db.Query(query, args...)
+	}
+	return s.tx.Query(query, args...)
+}
+
+func (s Store) exec(query string, args ...interface{}) (sql.Result, error) {
+	if s.tx == nil {
+		return s.db.Exec(query, args...)
+	}
+	return s.tx.Exec(query, args...)
+}
+
 func (s Store) GetJobs() ([]Job, error) {
-	rows, err := s.db.Query("select name, url from jobs")
+	rows, err := s.query("select name, url from jobs")
 	if err != nil {
 		return nil, err
 	}
@@ -133,7 +174,7 @@ func (s Store) GetJobs() ([]Job, error) {
 }
 
 func (s Store) GetJob(name string) (Job, error) {
-	rows, err := s.db.Query("select name, url from jobs where name = ?", name)
+	rows, err := s.query("select name, url from jobs where name = ?", name)
 	if err != nil {
 		return Job{}, err
 	}
@@ -149,7 +190,7 @@ func (s Store) GetJob(name string) (Job, error) {
 }
 
 func (s Store) PutJob(job Job) error {
-	_, err := s.db.Exec("insert into jobs values (?, ?)", job.Name, job.Url)
+	_, err := s.exec("insert into jobs values (?, ?)", job.Name, job.Url)
 	return err
 }
 
@@ -176,7 +217,7 @@ func conv(in sql.NullString) (int, error) {
 }
 
 func (s Store) GetBuilds(name string) ([]Build, error) {
-	rows, err := s.db.Query("select job, number, start, duration, host, result, failed, total from builds where job = ?", name)
+	rows, err := s.query("select job, number, start, duration, host, result, failed, total from builds where job = ?", name)
 	if err != nil {
 		return nil, err
 	}
@@ -213,13 +254,13 @@ func (s Store) GetBuilds(name string) ([]Build, error) {
 }
 
 func (s Store) InsertBuild(build Build) error {
-	_, err := s.db.Exec("insert into builds values (?, ?, ?, ?, ?, ?, ?, ?)",
+	_, err := s.exec("insert into builds values (?, ?, ?, ?, ?, ?, ?, ?)",
 		build.Job, build.Number, build.Start, build.Duration, build.Host, build.Result, build.Failed, build.Total)
 	return err
 }
 
 func (s Store) UpdateBuild(build Build) error {
-	_, err := s.db.Exec("update builds set start = ?, duration = ?, host = ?, result = ?, failed = ?, total = ? where job = ? and number = ?",
+	_, err := s.exec("update builds set start = ?, duration = ?, host = ?, result = ?, failed = ?, total = ? where job = ? and number = ?",
 		build.Start, build.Duration, build.Host, build.Result, build.Failed, build.Total, build.Job, build.Number)
 	return err
 }

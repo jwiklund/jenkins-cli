@@ -96,6 +96,9 @@ func RefreshBuilds(update bool) {
 		for _, build := range current {
 			existing[build.Number] = true
 		}
+		if err := store.Begin(); err != nil {
+			fmt.Println("Begin failure", err)
+		}
 		for _, build := range builds {
 			_, ok := existing[build.Number]
 			if !ok {
@@ -105,6 +108,9 @@ func RefreshBuilds(update bool) {
 				err = store.UpdateBuild(build)
 				fmt.Println("Updated build "+build.String(), err)
 			}
+		}
+		if err := store.Commit(); err != nil {
+			fmt.Println("Commit failure", err)
 		}
 	}
 }
