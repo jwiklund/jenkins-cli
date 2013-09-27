@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"regexp"
+	"sync"
 )
 
 var storeLocation = "data"
@@ -80,38 +81,46 @@ func RefreshBuilds(update bool) {
 		return
 	}
 	defer store.Close()
+	if err := store.Begin(); err != nil {
+		fmt.Println("Begin failure", err)
+	}
 	jobs, err := store.GetJobs()
+	var wg sync.WaitGroup
 	for _, job := range jobs {
-		builds, err := job.GetBuilds()
-		if err != nil {
-			fmt.Println("Could not refresh "+job.Name+", ", err)
-			continue
-		}
-		current, err := store.GetBuilds(job.Name)
-		if err != nil {
-			fmt.Println("Could not get builds from store ", err)
-			continue
-		}
-		existing := make(map[int]bool)
-		for _, build := range current {
-			existing[build.Number] = true
-		}
-		if err := store.Begin(); err != nil {
-			fmt.Println("Begin failure", err)
-		}
-		for _, build := range builds {
-			_, ok := existing[build.Number]
-			if !ok {
-				err = store.InsertBuild(build)
-				fmt.Println("Added build "+build.String(), err)
-			} else if update {
-				err = store.UpdateBuild(build)
-				fmt.Println("Updated build "+build.String(), err)
+		wg.Add(1)
+		f := func(job Job) {
+			defer wg.Done()
+			builds, err := job.GetBuilds()
+			if err != nil {
+				fmt.Println("Could not refresh "+job.Name+", ", err)
+				return
+			}
+			current, err := store.GetBuilds(job.Name)
+			if err != nil {
+				fmt.Println("Could not get builds from store ", err)
+				return
+			}
+			existing := make(map[int]bool)
+			for _, build := range current {
+				existing[build.Number] = true
+			}
+
+			for _, build := range builds {
+				_, ok := existing[build.Number]
+				if !ok {
+					err = store.InsertBuild(build)
+					fmt.Println("Added build "+build.String(), err)
+				} else if update {
+					err = store.UpdateBuild(build)
+					fmt.Println("Updated build "+build.String(), err)
+				}
 			}
 		}
-		if err := store.Commit(); err != nil {
-			fmt.Println("Commit failure", err)
-		}
+		go f(job)
+	}
+	wg.Wait()
+	if err := store.Commit(); err != nil {
+		fmt.Println("Commit failure", err)
 	}
 }
 
