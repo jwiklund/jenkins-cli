@@ -3,6 +3,7 @@ package jenkins
 import (
 	"bufio"
 	"errors"
+	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -11,6 +12,8 @@ import (
 type Jenkins interface {
 	Builds() ([]Build, error)
 	NodeInfo(node string) (NodeInfo, error)
+	Jobs() ([]Job, error)
+	JobInfo(job string) (JobInfo, error)
 }
 
 type Build struct {
@@ -31,6 +34,13 @@ type NodeInfo struct {
 	Node string
 	Ip   string
 }
+
+type Job struct {
+	Name  string `json:"name"`
+	Color string `json:"color"`
+}
+
+type JobInfo map[string]string
 
 func New(url string) Jenkins {
 	return jenkins(url)
@@ -97,22 +107,47 @@ func (j jenkins) Builds() ([]Build, error) {
 	return parseExecutors(resp.Body)
 }
 
-func (j jenkins) NodeInfo(node string) (NodeInfo, error) {
+func (j jenkins) authGet(url string) (io.ReadCloser, error) {
 	user, pass, err := j.auth()
 	if err != nil {
-		return NodeInfo{}, err
+		return nil, err
 	}
-	url := j.url() + "/computer/" + node + "/logText/progressiveHtml"
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
-		return NodeInfo{}, err
+		return nil, err
 	}
 	req.SetBasicAuth(user, pass)
 	client := http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
+		return nil, err
+	}
+	return resp.Body, nil
+}
+
+func (j jenkins) NodeInfo(node string) (NodeInfo, error) {
+	body, err := j.authGet(j.url() + "/computer/" + node + "/logText/progressiveHtml")
+	if err != nil {
 		return NodeInfo{}, err
 	}
+	defer body.Close()
+	return parseComputer(body)
+}
+
+func (j jenkins) Jobs() ([]Job, error) {
+	resp, err := http.Get(j.url() + "/api/json?tree=jobs[name,color]")
+	if err != nil {
+		return nil, err
+	}
 	defer resp.Body.Close()
-	return parseComputer(resp.Body)
+	return parseJobs(resp.Body)
+}
+
+func (j jenkins) JobInfo(job string) (JobInfo, error) {
+	body, err := j.authGet(j.url() + "/job/" + job + "/config.xml")
+	if err != nil {
+		return nil, err
+	}
+	defer body.Close()
+	return parseConfig(body)
 }
