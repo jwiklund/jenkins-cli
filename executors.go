@@ -61,8 +61,12 @@ func parseExecutors(rdr io.Reader) ([]Build, error) {
 		if err == nil {
 			nameLink, err := parseGetChild(th, atom.A, 1)
 			if err != nil {
-				fmt.Println("link not found")
-				return nil, err
+				//fmt.Println("link not found in " + h5.NewTree(th).String())
+				if tr == tbody.LastChild {
+					break
+				}
+				tr = tr.NextSibling
+				continue
 			}
 			if tr.NextSibling == nil {
 				builds = append(builds, Build{nameLink.FirstChild.Data, ""})
