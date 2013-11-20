@@ -62,6 +62,5 @@ func main() {
 				fmt.Printf("%s\t%s\t%s\n", job.Name, name, cfg[name])
 			}
 		}
-
 	}
 }
